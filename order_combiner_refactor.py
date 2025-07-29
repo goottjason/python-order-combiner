@@ -161,6 +161,179 @@ def get_sheet_id(service, sheet_name):
       return sheet['properties']['sheetId']
   raise Exception(f"Sheet '{sheet_name}' not found.")
 
+"""
+  구글 시트의 데이터에 스타일(테두리, 색상, 서식 등) 적용
+"""
+def apply_styling(service):
+  sheet_id = get_sheet_id(service, RANGE_NAME)  # 시트 ID 가져오기 ('order')
+  sheet = service.spreadsheets()  # 시트 객체 생성
+  result = sheet.values().get(spreadsheetId=SPREADSHEET_ID, range=RANGE_NAME).execute()  # 데이터 읽기
+  values = result.get('values', [])  # 값 추출
+  if not values:  # 데이터 없으면
+    log_message("No data found.")  # 로그 출력
+    return  # 함수 종료
+  headers = values[0]  # 헤더 추출
+  # 각 컬럼 인덱스 추출
+  order_date_index = headers.index('주문일')
+  shop_index = headers.index('샵')
+  order_number_index = headers.index('주문번호')
+  post_index = headers.index('POST')
+  순수익_index = headers.index('순수익')
+  구매비_index = headers.index('구매비')
+  배송비_index = headers.index('배송비')
+  총비용_index = headers.index('총비용')
+  순손익_index = headers.index('순손익')
+  수량_index = headers.index('수량')
+  구매정보_index = headers.index('구매정보')
+  requests = []  # 스타일 적용 요청 리스트
+
+  # 전체 테두리 스타일 적용
+  requests.append({
+    "updateBorders": {
+      "range": {
+        "sheetId": sheet_id,
+        "startRowIndex": 0,
+        "endRowIndex": len(values),
+        "startColumnIndex": 0,
+        "endColumnIndex": len(headers)
+      },
+      "top": {"style": "SOLID", "width": "1", "color": {"red": 0, "green": 0, "blue": 0}},
+      "bottom": {"style": "SOLID", "width": "1", "color": {"red": 0, "green": 0, "blue": 0}},
+      "left": {"style": "SOLID", "width": "1", "color": {"red": 0, "green": 0, "blue": 0}},
+      "right": {"style": "SOLID", "width": "1", "color": {"red": 0, "green": 0, "blue": 0}},
+      "innerHorizontal": {"style": "SOLID", "width": "1", "color": {"red": 0, "green": 0, "blue": 0}},
+      "innerVertical": {"style": "SOLID", "width": "1", "color": {"red": 0, "green": 0, "blue": 0}}
+    }
+  })
+
+  # POST 컬럼 텍스트 서식 적용
+  if post_index is not None:
+    for row_index in range(1, len(values)):
+      requests.append({
+        "updateCells": {
+          "range": {
+            "sheetId": sheet_id,
+            "startRowIndex": row_index,
+            "endRowIndex": row_index + 1,
+            "startColumnIndex": post_index,
+            "endColumnIndex": post_index + 1
+          },
+          "rows": [{"values": [{"userEnteredFormat": {"numberFormat": {"type": "TEXT"}}}]}],
+          "fields": "userEnteredFormat.numberFormat"
+        }
+      })
+
+  # 통화 서식 컬럼 적용
+  currency_columns = {
+    "순수익": 순수익_index,
+    "구매비": 구매비_index,
+    "배송비": 배송비_index,
+    "총비용": 총비용_index,
+    "순손익": 순손익_index,
+  }
+  for col_name, col_index in currency_columns.items():
+    if col_index is not None:
+      for row_index in range(1, len(values)):
+        requests.append({
+          "updateCells": {
+            "range": {
+              "sheetId": sheet_id,
+              "startRowIndex": row_index,
+              "endRowIndex": row_index + 1,
+              "startColumnIndex": col_index,
+              "endColumnIndex": col_index + 1
+            },
+            "rows": [{"values": [{"userEnteredFormat": {"numberFormat": {"type": "CURRENCY", "pattern": "₩#,##0"}}}]}],
+            "fields": "userEnteredFormat.numberFormat"
+          }
+        })
+
+  # 구매정보 특수문자 행의 수량 컬럼 볼드 처리
+  if 구매정보_index is not None and 수량_index is not None:
+    for row_index in range(1, len(values)):
+      try:
+        if values[row_index][구매정보_index].strip() == '⠀':
+          requests.append({
+            "updateCells": {
+              "range": {
+                "sheetId": sheet_id,
+                "startRowIndex": row_index,
+                "endRowIndex": row_index + 1,
+                "startColumnIndex": 수량_index,
+                "endColumnIndex": 수량_index + 1
+              },
+              "rows": [{"values": [{"userEnteredFormat": {"textFormat": {"bold": True}}}]}],
+              "fields": "userEnteredFormat.textFormat.bold"
+            }
+          })
+      except IndexError as e:
+        log_message(f"Error processing row {row_index + 1}: {e}")
+
+  # 주문일, 샵별 배경색 적용
+  for row_index, row in enumerate(values[1:], start=2):
+    order_date_str = row[order_date_index]
+    try:
+      if len(order_date_str.split('.')) == 2:
+        order_date_str = f"2025. {order_date_str.strip()}"
+      order_date = datetime.datetime.strptime(order_date_str, '%Y. %m. %d')
+      cell_color = "#fff2cc" if order_date.day % 2 != 0 else "#faff9f"
+    except ValueError:
+      log_message(f"Invalid date format: {order_date_str}")
+      continue
+
+    requests.append({
+      "updateCells": {
+        "range": {
+          "sheetId": sheet_id,
+          "startRowIndex": row_index - 1,
+          "endRowIndex": row_index,
+          "startColumnIndex": order_date_index,
+          "endColumnIndex": order_date_index + 1
+        },
+        "rows": [{"values": [{"userEnteredFormat": {"backgroundColor": {
+          "red": int(cell_color[1:3], 16) / 255,
+          "green": int(cell_color[3:5], 16) / 255,
+          "blue": int(cell_color[5:], 16) / 255
+        }}}]}],
+        "fields": "userEnteredFormat.backgroundColor"
+      }
+    })
+
+    shop = row[shop_index]
+    shop_colors = {
+      "쿠팡": "#ff6699",
+      "스마트스토어": "#a9d08e",
+      "G마켓": "#00b050",
+      "옥션": "#ffc000",
+      "11번가": "#548dd4"
+    }
+
+    if shop in shop_colors:
+      color = shop_colors[shop]
+      for col_index in [shop_index, order_number_index]:
+        requests.append({
+          "updateCells": {
+            "range": {
+              "sheetId": sheet_id,
+              "startRowIndex": row_index - 1,
+              "endRowIndex": row_index,
+              "startColumnIndex": col_index,
+              "endColumnIndex": col_index + 1
+            },
+            "rows": [{"values": [{"userEnteredFormat": {"backgroundColor": {
+              "red": int(color[1:3], 16) / 255,
+              "green": int(color[3:5], 16) / 255,
+              "blue": int(color[5:], 16) / 255
+            }}}]}],
+            "fields": "userEnteredFormat.backgroundColor"
+          }
+        })
+
+  body = {'requests': requests}  # 스타일 적용 요청 바디
+  sheet.batchUpdate(spreadsheetId=SPREADSHEET_ID, body=body).execute()  # 스타일 일괄 적용
+  log_message("Styling applied successfully.")  # 로그 출력
+
+
 def update_formulas_and_styles(service, start_row, end_row, headers, sheet_id, platform_name):
   """새 행에 수식과 스타일 동적으로 적용 (컬럼 이름 기반)"""
   requests = []
@@ -374,6 +547,7 @@ def run_program(service):
 
       enriched_data = enrich_data_with_fas(data, service)
       append_new_orders(service, enriched_data, platform_name)
+      apply_styling(service)
     log_message("모든 작업 완료!")
 
   threading.Thread(target=task).start()
